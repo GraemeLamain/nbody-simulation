@@ -1,0 +1,1 @@
+# FPS and compute time: naive vs Barnes Hut across particle counts

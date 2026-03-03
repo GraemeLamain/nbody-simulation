@@ -1,0 +1,1 @@
+# Scene selection, integrator flags, algorithm flags
