@@ -4,7 +4,7 @@ HEIGHT = 800
 FPS = 60
 
 # Simulation Settings
-TIMESTEP = 3600.0   # 1 hour in seconds
+TIMESTEP = 86400.0  # 1 day in seconds
 THETA = 0.5         # Barnes-Hut opening criterion
 
 # Physical Constants
