@@ -99,12 +99,16 @@ class Renderer:
                     color = tuple(int(c * alpha / 255) for c in body.color)
                     pygame.draw.line(self.screen, color, p1, p2, 1)
 
-            # draw body and label only when on screen (guards against C int overflow for off-screen bodies)
+            # draw body and label only when on screen
             on_screen = 0 <= screen_pos[0] <= self.width and 0 <= screen_pos[1] <= self.height
             if on_screen:
                 pygame.draw.circle(self.screen, body.color, screen_pos, int(body.radius))
-                label = self.font.render(body.name, True, (180, 180, 180))
-                self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
+
+                # Only render labels if the body is not a procedurally generated star
+                # This is to prevent the screen from being flooded with labels in galaxy simulations
+                if not body.name.startswith("star"):
+                    label = self.font.render(body.name, True, (180, 180, 180))
+                    self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
 
         # --- HUD panel ---
         panel = pygame.Surface((hud_width, self.height), pygame.SRCALPHA)

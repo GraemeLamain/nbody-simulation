@@ -4,9 +4,18 @@ This project will be a real time 2D gravitational N-Body simulation of our Solar
 
 If time permits and all of that is completed ahead of time, there is an extension that can be made to this which would be to go from simulating the solar system, into simulating the collision of two galaxies. This expansion should utilize the same physics, however the challenge comes in simulating up to thousands of bodies and demonstrating the performance of the different algorithms at different levels of scale.
 
-Command Line Flags for Starting:
-- python main.py                    (Runs with approximate planet positions as normal)
-- python main.py --jpl              (Runs with NASA JPL Horizons initial conditions)
-- python main.py --compare          (Runs integrator comparison and exits)
-- python main.py --compare --jpl    (Runs integrator comparison and comparison between simulated positions and JPL positions)
-    - You should use this one almost always, the other one just works fine but it starts you far away from the actual positions so some numbers arent accurate
+How to Run:
+- --jpl                         (Runs with NASA JPL Horizons initial conditions)
+- --compare                     (Runs integrator comparison and exits)
+- --scene [solar, galaxy]       (Runs the specific scene)
+- --gravity [naive, barneshut]  (Runs the simulation with the specific gravity algorithm)
+
+Examples:
+- python main.py                        (Runs with approximate planet positions as normal)
+- python main.py --jpl                  (Runs with NASA JPL Horizons initial conditions)
+- python main.py --compare              (Runs integrator comparison and exits)
+- python main.py --compare --jpl        (Runs integrator comparison and comparison between simulated positions and JPL positions)
+- python main.py --scene solar          (Runs the solar system scene)
+- python main.py --scene galaxy         (Runs the galaxy collision scene)
+- python main.py --gravity naive        (Runs the simulation with the naive gravity algorithm)
+- python main.py --gravity barneshut    (Runs the simulation with the Barnes-Hut algorithm)
