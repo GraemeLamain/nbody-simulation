@@ -23,10 +23,16 @@ class Renderer:
         self.reset_time = False        # set True by handle_events when K is pressed
 
     def world_to_screen(self, position: np.ndarray, scale: float, offset: np.ndarray) -> tuple:
-        """Convert world coordinates (metres) to screen pixels."""
-        x = int(position[0] * scale + offset[0])
-        y = int(position[1] * scale + offset[1])
-        return (x, y)
+        """Convert world coordinates (metres) to screen pixels.
+        Returns (-1, -1) for NaN/inf positions (treated as off-screen by all callers).
+        Clamps finite values to a range pygame can safely handle.
+        """
+        x = float(position[0]) * scale + float(offset[0])
+        y = float(position[1]) * scale + float(offset[1])
+        if not (np.isfinite(x) and np.isfinite(y)):
+            return (-1, -1)
+        return (int(np.clip(x, -1_000_000, 1_000_000)),
+                int(np.clip(y, -1_000_000, 1_000_000)))
 
     def handle_events(self) -> bool:
         # reset one-shot flags each frame
@@ -81,19 +87,24 @@ class Renderer:
             if self.show_trails and self.zoom > 0.5:
                 trail = self.trails[body.name]
                 for i in range(1, len(trail)):
-                    alpha = int(255 * i / len(trail))  # fade older points
-                    color = tuple(int(c * alpha / 255) for c in body.color)
                     p1 = self.world_to_screen(trail[i - 1], scale, offset)
                     p2 = self.world_to_screen(trail[i], scale, offset)
+                    # skip segments where either endpoint is off the safe draw area
+                    if not (-10_000 <= p1[0] <= self.width + 10_000 and
+                            -10_000 <= p1[1] <= self.height + 10_000 and
+                            -10_000 <= p2[0] <= self.width + 10_000 and
+                            -10_000 <= p2[1] <= self.height + 10_000):
+                        continue
+                    alpha = int(255 * i / len(trail))  # fade older points
+                    color = tuple(int(c * alpha / 255) for c in body.color)
                     pygame.draw.line(self.screen, color, p1, p2, 1)
 
-            # draw body
-            if 0 <= screen_pos[0] <= self.width and 0 <= screen_pos[1] <= self.height:
+            # draw body and label only when on screen (guards against C int overflow for off-screen bodies)
+            on_screen = 0 <= screen_pos[0] <= self.width and 0 <= screen_pos[1] <= self.height
+            if on_screen:
                 pygame.draw.circle(self.screen, body.color, screen_pos, int(body.radius))
-
-            # label
-            label = self.font.render(body.name, True, (180, 180, 180))
-            self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
+                label = self.font.render(body.name, True, (180, 180, 180))
+                self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
 
         # --- HUD panel ---
         panel = pygame.Surface((hud_width, self.height), pygame.SRCALPHA)
