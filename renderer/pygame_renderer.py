@@ -1,4 +1,4 @@
-# Pygame rendering, pixel-array batch draw for large particle coutns
+# Pygame renderer - handles drawing, the HUD, user input, and zoom/trails
 import pygame
 import numpy as np
 from simulation.body import Body
@@ -12,6 +12,7 @@ class Renderer:
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption(title)
+
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("monospace", 14)
         self.trails: dict[str, deque] = {}  # body name -> deque of world positions (metres)
@@ -46,26 +47,34 @@ class Renderer:
                 if event.key == pygame.K_ESCAPE:
                     return False
                 if event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                    # Increase the number of steps per frame
                     self.steps_per_frame = min(self.steps_per_frame * 2, 3840)
                     self.trails.clear()
                 if event.key == pygame.K_MINUS:
+                    # Decrease the number of steps per frame
                     self.steps_per_frame = max(self.steps_per_frame // 2, 1)
                     self.trails.clear()
                 if event.key == pygame.K_r:
+                    # Reset the number of steps per frame to default
                     self.steps_per_frame = 30
                     self.trails.clear()
                 if event.key == pygame.K_i:
+                    # Cycle through the integrators
                     self.cycle_integrator = True
                 if event.key == pygame.K_k:
+                    # Reset the simulation time
                     self.reset_time = True
                 if event.key == pygame.K_l:
+                    # Toggle the trails
                     self.show_trails = not self.show_trails
                     self.trails.clear()
             if event.type == pygame.MOUSEWHEEL:
                 if event.y > 0:
-                    self.zoom *= 1.1   # scroll up = zoom in
+                    # Zoom in
+                    self.zoom *= 1.1   
                 else:
-                    self.zoom *= 0.9   # scroll down = zoom out
+                    # Zoom out
+                    self.zoom *= 0.9   
                 self.trails.clear()  # clear trails when zooming
         return True
 
@@ -78,37 +87,46 @@ class Renderer:
         for body in bodies:
             screen_pos = self.world_to_screen(body.position, scale, offset)
 
-            # update trail with world position (always accumulate so toggling back on shows recent history)
+            # Always accumulate trail history even when trails are hidden, so
+            # toggling them back on shows recent path rather than starting from scratch.
             if body.name not in self.trails:
                 self.trails[body.name] = deque(maxlen=self.trail_length)
             self.trails[body.name].append(body.position.copy())
 
-            # draw trail — convert world positions to screen at draw time
+            # Only draw trails when enabled and zoomed in enough to be worth it.
             if self.show_trails and self.zoom > 0.5:
                 trail = self.trails[body.name]
                 for i in range(1, len(trail)):
                     p1 = self.world_to_screen(trail[i - 1], scale, offset)
                     p2 = self.world_to_screen(trail[i], scale, offset)
-                    # skip segments where either endpoint is off the safe draw area
+
+                    # Skip segments that are way off screen - Pygame gets unhappy
+                    # with coordinates in the millions.
                     if not (-10_000 <= p1[0] <= self.width + 10_000 and
                             -10_000 <= p1[1] <= self.height + 10_000 and
                             -10_000 <= p2[0] <= self.width + 10_000 and
                             -10_000 <= p2[1] <= self.height + 10_000):
                         continue
-                    alpha = int(255 * i / len(trail))  # fade older points
+
+                    # Fade older trail segments toward black.
+                    alpha = int(255 * i / len(trail))
                     color = tuple(int(c * alpha / 255) for c in body.color)
                     pygame.draw.line(self.screen, color, p1, p2, 1)
 
-            # draw body and label only when on screen
             on_screen = 0 <= screen_pos[0] <= self.width and 0 <= screen_pos[1] <= self.height
             if on_screen:
-                pygame.draw.circle(self.screen, body.color, screen_pos, int(body.radius))
-
-                # Only render labels if the body is not a procedurally generated star
-                # This is to prevent the screen from being flooded with labels in galaxy simulations
-                if not body.name.startswith("star"):
-                    label = self.font.render(body.name, True, (180, 180, 180))
-                    self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
+                # Draw a square instead of a mathematically expensive circle for stars
+                if body.name.startswith("star"):
+                    rect = (screen_pos[0], screen_pos[1], max(2, int(body.radius)), max(2, int(body.radius)))
+                    pygame.draw.rect(self.screen, body.color, rect)
+                else:
+                    # We want to draw a circle for objects that are not stars because it will look better and i dont care if it costs extra
+                    pygame.draw.circle(self.screen, body.color, screen_pos, int(body.radius))
+                    # Only render labels for non-star bodies
+                    # This prevents the screen being flooded with labels in the galaxy simulations
+                    if not body.name.startswith("black_hole"):
+                        label = self.font.render(body.name, True, (180, 180, 180))
+                        self.screen.blit(label, (screen_pos[0] + 15, screen_pos[1] - 6))
 
         # --- HUD panel ---
         panel = pygame.Surface((hud_width, self.height), pygame.SRCALPHA)

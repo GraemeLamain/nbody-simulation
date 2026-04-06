@@ -48,8 +48,8 @@ def fetch_body_vectors(body_id: str, date: str) -> dict:
 
     Returns:
         dict with keys:
-            "position"  — np.ndarray [x, y] in metres
-            "velocity"  — np.ndarray [vx, vy] in m/s
+            "position"  - np.ndarray [x, y] in metres
+            "velocity"  - np.ndarray [vx, vy] in m/s
     """
     start_dt  = datetime.strptime(date, "%Y-%m-%d")
     stop_date = (start_dt + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -170,9 +170,9 @@ def create_solar_system_from_jpl(date: str) -> list[Body]:
             print(f"  WARNING: Failed to fetch {name}: {exc}. Will use approximate fallback.")
             fallback_needed.append(name)
 
-    # If Sun fetch failed we cannot centre anything — fall back entirely
+    # If Sun fetch failed we cannot centre anything - fall back entirely
     if "Sun" in fallback_needed:
-        print("  Sun fetch failed — falling back to full approximate solar system.")
+        print("  Sun fetch failed - falling back to full approximate solar system.")
         return create_solar_system()
 
     sun_pos = raw["Sun"]["position"]

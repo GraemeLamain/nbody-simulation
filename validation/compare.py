@@ -56,7 +56,7 @@ def plot_orbital_deviation(time_series: list, sim_positions_dict: dict, jpl_posi
 
     ax.set_xlabel("Simulated Time (years)")
     ax.set_ylabel("Position Deviation (km)")
-    ax.set_title(f"Orbital Deviation vs JPL — {planet_name}")
+    ax.set_title(f"Orbital Deviation vs JPL - {planet_name}")
     # Using a log scale for the Y-axis is highly recommended here because Euler's error 
     # will be so massive it will squish RK4 and Leapfrog to the bottom of a linear graph.
     ax.set_yscale("log") 
