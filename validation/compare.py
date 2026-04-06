@@ -1,4 +1,3 @@
-# Plot simulated vs real orbital paths, deviation in km over time
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,17 +9,11 @@ SECONDS_PER_YEAR = 365.25 * 86400
 
 
 def plot_energy_drift(time_series: list, energy_dict: dict, filename: str = "energy_drift.png") -> None:
-    """Plot total mechanical energy over time for one or more integrators.
+    '''Plot total mechanical energy over time for each integrator.
 
-    Energy should never be lost in a closed system so any discrepancy is due to the integrator
-    not being able to accurately model the system. The best integrator will have the least
-    energy drift.
-
-    Args:
-        time_series: List of simulation timestamps in seconds.
-        energy_dict: Dict mapping integrator name -> list of energy values in joules.
-        filename:    Output image path.
-    """
+    A good integrator keeps this flat - any drift means the integrator is losing
+    or adding energy that shouldn't be there.
+    '''
     years = [t / SECONDS_PER_YEAR for t in time_series]
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -39,7 +32,7 @@ def plot_energy_drift(time_series: list, energy_dict: dict, filename: str = "ene
 
 
 def plot_orbital_deviation(time_series: list, sim_positions_dict: dict, jpl_positions: list, planet_name: str, filename: str = None) -> None:
-    """Plot the distance between simulated and reference positions over time for multiple integrators."""
+    '''Plot distance between simulated and JPL reference positions over time.'''
     if filename is None:
         filename = f"{planet_name.lower()}_combined_deviation.png"
 
@@ -57,8 +50,7 @@ def plot_orbital_deviation(time_series: list, sim_positions_dict: dict, jpl_posi
     ax.set_xlabel("Simulated Time (years)")
     ax.set_ylabel("Position Deviation (km)")
     ax.set_title(f"Orbital Deviation vs JPL - {planet_name}")
-    # Using a log scale for the Y-axis is highly recommended here because Euler's error 
-    # will be so massive it will squish RK4 and Leapfrog to the bottom of a linear graph.
+    # log scale is important here - Euler's error is so large it squishes RK4/Leapfrog on a linear plot
     ax.set_yscale("log") 
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -67,27 +59,26 @@ def plot_orbital_deviation(time_series: list, sim_positions_dict: dict, jpl_posi
     print(f"Saved: {filename}")
     plt.show()
 
+
 def calculate_orbital_period(time_series: list, position_series: list) -> float:
-    """Detect when a body completes an orbit by crossing the X-axis (Y goes negative to positive)."""
+    '''Detect orbital period by finding when the body crosses the x-axis (y: negative -> positive).'''
     crossings = []
     for i in range(1, len(position_series)):
         y_prev = position_series[i-1][1]
         y_curr = position_series[i][1]
         
         if y_prev < 0 and y_curr >= 0:
-            # Linear interpolation for sub-step precision
+            # linear interpolation for sub-step precision
             fraction = abs(y_prev) / (abs(y_prev) + abs(y_curr))
             exact_time = time_series[i-1] + fraction * (time_series[i] - time_series[i-1])
             crossings.append(exact_time)
             
     if len(crossings) >= 2:
-        # Return the time difference between the first and second crossing in days
         return (crossings[1] - crossings[0]) / 86400.0
-    return 0.0 # Orbit not completed
+    return 0.0
 
 
 def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: str = "Earth", years: int = 2, dt: float = 86400.0) -> None:
-    ''' Runs the integrator comparison over a specified number of years and dt '''
     REAL_PERIODS = {
         "Mercury": 87.97,
         "Venus": 224.70,
@@ -108,7 +99,6 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
     print(f"\n--- Fetching JPL Timeseries for {target_planet} ---")
     jpl_positions = fetch_jpl_timeseries(BODY_IDS[target_planet], start_date, total_steps + 1)
     
-    # Get real world period in days for the target planet
     real_period = REAL_PERIODS[target_planet]
     print(f"JPL Target Period: ~{real_period} days\n")
 
@@ -128,14 +118,13 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
         energy_series = []
         sim_positions = []
         
-        # Find the index of the target planet
         target_idx = next(i for i, b in enumerate(sim.bodies) if b.name == target_planet)
 
         for step in range(total_steps):
             time_series.append(sim.time)
             energy_series.append(sim.get_energy())
             
-            # Record relative to the Sun (index 0) so the drift is purely orbital, not system translation
+            # track relative to the Sun so we're measuring orbital error, not system drift
             sun_pos = sim.bodies[0].position
             planet_pos = sim.bodies[target_idx].position
             sim_positions.append(planet_pos - sun_pos)
@@ -144,13 +133,9 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
 
         results[name] = (time_series, energy_series, sim_positions)
         
-        # Calculate Period
         sim_period = calculate_orbital_period(time_series, sim_positions)
         period_error = abs(sim_period - real_period) if sim_period else float('inf')
         
-        # Calculate Max Deviation from JPL
-        # This is done by taking the norm of the difference between the simulated and JPL positions
-        # and then converting to km
         deviations = [np.linalg.norm(s - j) / 1000.0 for s, j in zip(sim_positions, jpl_positions[:-1])]
         max_dev = max(deviations)
         
@@ -162,7 +147,6 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
         print(f"    - Max Position Deviation from JPL: {max_dev:,.2f} km")
         print(f"    - Energy Drift: {energy_series[-1] - energy_series[0]:.3e} J\n")
 
-    # Shared time axis for energy plot
     first_name = next(iter(results))
     shared_times = results[first_name][0]
 

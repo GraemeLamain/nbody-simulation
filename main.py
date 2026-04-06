@@ -12,7 +12,6 @@ from scenes.solar_system import create_solar_system
 from scenes.galaxy_collision import create_galaxy_collision
 from validation.nasa_fetch import create_solar_system_from_jpl
 from validation.compare import run_integrator_comparison
-from validation.nasa_fetch import create_solar_system_from_jpl
 from config import WIDTH, HEIGHT, FPS, AU, G
 
 # --- CLI arguments ---

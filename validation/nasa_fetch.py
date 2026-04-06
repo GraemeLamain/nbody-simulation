@@ -1,4 +1,3 @@
-# HTTP requests for JPL Horizons API, unit conversion (AU to SI)
 import re
 import requests
 import numpy as np
@@ -6,26 +5,25 @@ from datetime import datetime, timedelta
 from simulation.body import Body
 from scenes.solar_system import create_solar_system
 
-AU_TO_M        = 1.496e11       # metres per AU
-AU_DAY_TO_MS   = 1_731_481.0   # m/s per AU/day  (= 1.496e11 m / 86400 s)
+AU_TO_M        = 1.496e11
+AU_DAY_TO_MS   = 1_731_481.0   # m/s per AU/day
 
 HORIZONS_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
 
 # Barycenter just means the center of mass of that planet including its moons
 # This is done so that we dont need to have a separate body for each moon but we still get the accuracy of having them in the simulation
 BODY_IDS = {
-    "Sun":     "10", # Sun's center
-    "Mercury": "1",  # Mercury System Barycenter 
-    "Venus":   "2",  # Venus System Barycenter
-    "Earth":   "3",  # Earth-Moon Barycenter
-    "Mars":    "4",  # Mars System Barycenter
-    "Jupiter": "5",  # Jupiter System Barycenter
-    "Saturn":  "6",  # Saturn System Barycenter
-    "Uranus":  "7",  # Uranus System Barycenter
-    "Neptune": "8",  # Neptune System Barycenter
+    "Sun":     "10",
+    "Mercury": "1",
+    "Venus":   "2",
+    "Earth":   "3",   # Earth-Moon Barycenter
+    "Mars":    "4",
+    "Jupiter": "5",
+    "Saturn":  "6",
+    "Uranus":  "7",
+    "Neptune": "8",
 }
 
-# Masses, colors, and radii mirrored from scenes/solar_system.py
 BODY_META = {
     "Sun":     {"mass": 1.989e30, "color": (255, 255,   0), "radius":  6.0},
     "Mercury": {"mass": 3.285e23, "color": (169, 169, 169), "radius":  2.0},
@@ -40,17 +38,10 @@ BODY_META = {
 
 
 def fetch_body_vectors(body_id: str, date: str) -> dict:
-    """Query the NASA JPL Horizons API for position and velocity vectors.
+    '''Query JPL Horizons for position and velocity vectors on a given date.
 
-    Args:
-        body_id: JPL body ID string (e.g. "399" for Earth).
-        date:    Start date in "YYYY-MM-DD" format.
-
-    Returns:
-        dict with keys:
-            "position"  - np.ndarray [x, y] in metres
-            "velocity"  - np.ndarray [vx, vy] in m/s
-    """
+    Returns position in metres and velocity in m/s, both as 2D numpy arrays.
+    '''
     start_dt  = datetime.strptime(date, "%Y-%m-%d")
     stop_date = (start_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -74,7 +65,6 @@ def fetch_body_vectors(body_id: str, date: str) -> dict:
 
     result_text = response.json()["result"]
 
-    # Extract data block between $$SOE and $$EOE markers
     soe = result_text.find("$$SOE")
     eoe = result_text.find("$$EOE")
     if soe == -1 or eoe == -1:
@@ -102,8 +92,9 @@ def fetch_body_vectors(body_id: str, date: str) -> dict:
         "velocity": np.array([vx * AU_DAY_TO_MS, vy * AU_DAY_TO_MS]),
     }
 
+
 def fetch_jpl_timeseries(body_id: str, start_date: str, days: int) -> list[np.ndarray]:
-    """Fetch daily positions for a specific body over a set number of days."""
+    '''Fetch daily positions for a body over a range of days.'''
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     stop_date = (start_dt + timedelta(days=days)).strftime("%Y-%m-%d")
 
@@ -130,7 +121,6 @@ def fetch_jpl_timeseries(body_id: str, start_date: str, days: int) -> list[np.nd
     eoe = result_text.find("$$EOE")
     data_block = result_text[soe + len("$$SOE"):eoe]
 
-    # Find all occurrences of X and Y in the timeseries block
     matches = re.findall(r"X\s*=\s*([-\d.E+]+)\s*Y\s*=\s*([-\d.E+]+)", data_block)
     
     positions = []
@@ -141,24 +131,14 @@ def fetch_jpl_timeseries(body_id: str, start_date: str, days: int) -> list[np.nd
 
 
 def create_solar_system_from_jpl(date: str) -> list[Body]:
-    """Build a solar system body list using real JPL Horizons initial conditions.
-
-    Positions and velocities are fetched from the Horizons API for the given date.
-    The Sun is placed at the origin and all other bodies are expressed relative to it.
-    Masses, colors, and radii are taken from the approximate solar system scene.
+    '''Build a solar system using real JPL Horizons initial conditions.
 
     Falls back to create_solar_system() for any body that fails to fetch.
-
-    Args:
-        date: Date string in "YYYY-MM-DD" format.
-
-    Returns:
-        list[Body] ordered Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune.
-    """
+    Everything is expressed relative to the Sun.
+    '''
     body_names = ["Sun", "Mercury", "Venus", "Earth", "Mars",
                   "Jupiter", "Saturn", "Uranus", "Neptune"]
 
-    # Fetch vectors for all bodies
     raw: dict[str, dict] = {}
     fallback_needed: list[str] = []
 
@@ -170,7 +150,6 @@ def create_solar_system_from_jpl(date: str) -> list[Body]:
             print(f"  WARNING: Failed to fetch {name}: {exc}. Will use approximate fallback.")
             fallback_needed.append(name)
 
-    # If Sun fetch failed we cannot centre anything - fall back entirely
     if "Sun" in fallback_needed:
         print("  Sun fetch failed - falling back to full approximate solar system.")
         return create_solar_system()
@@ -185,7 +164,6 @@ def create_solar_system_from_jpl(date: str) -> list[Body]:
         meta = BODY_META[name]
 
         if name in fallback_needed:
-            # Use approximate body from scenes/solar_system.py
             approx = approx_bodies[name]
             bodies.append(Body(
                 name=name,
@@ -196,7 +174,6 @@ def create_solar_system_from_jpl(date: str) -> list[Body]:
                 radius=meta["radius"],
             ))
         else:
-            # Shift to Sun-centred reference frame
             position = raw[name]["position"] - sun_pos
             velocity = raw[name]["velocity"] - sun_vel
             bodies.append(Body(

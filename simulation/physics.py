@@ -1,7 +1,4 @@
-# Three different ways to compute gravity, all based on Newton's law of gravitation.
-#
-# All three are JIT-compiled by Numba so Python loop overhead doesn't skew any
-# performance comparisons between them.
+# Different ways of computing gravity forces
 import math
 import numpy as np
 from numba import njit
@@ -16,19 +13,14 @@ from simulation.quadtree import QuadTree, BoundingBox
 
 @njit(cache=True)
 def _naive_force_kernel(body_pos, body_mass, out_forces, G, softening):
-    '''The straightforward O(n^2) gravity kernel.
+    '''O(n^2) gravity kernel using Newton's 3rd law to halve the work.
 
-    Loops over every unique pair (i, j) with j > i, computes the mutual force,
-    and applies it to both bodies at once using Newton's third law.
-    cache=True means Numba writes the compiled binary to disk so it doesn't
-    recompile from scratch every run.
+    j starts at i+1 so each pair is only visited once.
+    cache=True means Numba saves the compiled binary so it doesn't recompile every run.
     '''
     n = len(body_mass)
 
     for i in range(n):
-        # j starts at i+1 so we visit each pair exactly once.
-        # If j started at 0 we'd compute every pair twice, and Newton's 3rd law
-        # trick would break - forces would be doubled.
         for j in range(i + 1, n):
 
             # Vector pointing from body i to body j (in metres).
@@ -45,69 +37,49 @@ def _naive_force_kernel(body_pos, body_mass, out_forces, G, softening):
             if dist == 0.0:
                 continue
 
-            # safe_raw is only for normalising the direction vector (dx/raw_dist).
-            # If raw_dist is 0 we substitute 1.0 - the force will be 0 anyway
-            # since dx and dy are both 0 in that case, so no physics is changed.
+            # if bodies are exactly on top of each other, avoid dividing by zero in direction calc
             safe_raw = raw_dist if raw_dist > 0.0 else 1.0
 
             # Newton's law: F = G * m1 * m2 / r^2
             # We use the softened distance so the force stays bounded.
             f = G * body_mass[i] * body_mass[j] / (dist * dist)
-
-            # Break the scalar force into x and y components.
-            # (dx / safe_raw) gives the x-component of the unit vector from i to j.
             fx = f * dx / safe_raw
             fy = f * dy / safe_raw
 
-            # Apply to both bodies in one shot: i is pulled toward j, j toward i.
-            # This is the Newton's 3rd law shortcut that halves the total work.
+            # apply to both bodies at once - Newton's 3rd law
             out_forces[i, 0] += fx
             out_forces[i, 1] += fy
-            out_forces[j, 0] -= fx   # equal and opposite
+            out_forces[j, 0] -= fx
             out_forces[j, 1] -= fy
 
 
 # =============================================================================
-# KERNEL 2 - Vectorized full N×N matrix, no Newton's 3rd shortcut
+# KERNEL 2 - Vectorized full N×N, no Newton's 3rd shortcut
 # =============================================================================
 
 @njit(cache=True)
 def _vectorized_force_kernel(body_pos, body_mass, out_forces, G, softening):
-    '''The full NxN kernel - every ordered pair computed independently.
+    '''Full NxN kernel - every ordered pair computed independently.
 
-    Unlike the naive kernel, this doesn't exploit Newton's 3rd law. It evaluates
-    (i->j) and (j->i) as separate force calculations. The trade-off is that it does
-    twice the work, but it uses Plummer softening (epsilon^2 added inside the square root)
-    instead of plain additive softening, which is a smoother and more physically
-    standard approach.
+    Doesn't use Newton's 3rd law so it does twice the work, but uses Plummer
+    softening (epsilon^2 inside the sqrt) which is smoother than additive softening.
     '''
     n = len(body_mass)
 
     for i in range(n):
         for j in range(n):
-
-            # A body can't pull on itself.
             if i == j:
                 continue
 
             dx = body_pos[j, 0] - body_pos[i, 0]
             dy = body_pos[j, 1] - body_pos[i, 1]
 
-            # Plummer softening: tuck epsilon^2 inside the distance before taking the root,
-            # giving sqrt(r^2 + epsilon^2) as the effective distance. This is always positive
-            # and stays smooth as r -> 0, with no kink in the force law.
-            # The naive kernel adds epsilon after the root (r + epsilon), which works but has
-            # a slight discontinuity in slope. Plummer is the cosmological standard.
+            # Plummer softening - always positive, smooth as r -> 0
             dist_sq = dx*dx + dy*dy + softening*softening
             dist    = math.sqrt(dist_sq)
 
             # F = G * m1 * m2 / (r^2 + epsilon^2)
             f = G * body_mass[i] * body_mass[j] / dist_sq
-
-            # Accumulate the force from j onto i.
-            # (dx / dist) is the x unit-vector component from i toward j.
-            # We don't need to handle j's side here - that happens naturally
-            # when the outer loop reaches i = (old j).
             out_forces[i, 0] += f * dx / dist
             out_forces[i, 1] += f * dy / dist
 
@@ -124,17 +96,15 @@ def _bh_force_kernel(body_pos, body_mass,
                      theta, G, softening, out_forces):
     '''Barnes-Hut force walk on the flattened quadtree arrays.
 
-    The core idea: groups of bodies that are far enough away get lumped together
-    into a single point mass, cutting the cost from O(n²) to O(n log n).
-    We can't pass the tree object into Numba (it's a Python class), so
-    QuadTree.flatten() serialises everything into plain NumPy arrays beforehand.
-    The root node always lives at index 0 in those arrays.
+    Groups of distant bodies get treated as a single point mass, cutting cost
+    from O(n^2) to O(n log n). We can't pass the tree object into Numba so
+    QuadTree.flatten() serializes everything into plain numpy arrays first.
+    Root node is always at index 0.
     '''
     n = len(body_mass)
 
-    # We need an explicit stack for tree traversal since Numba doesn't allow
-    # Python lists inside @njit. 512 slots is massively overkill - at n=1000
-    # the tree is only about 3 levels deep and the stack never goes past ~12.
+    # explicit stack since Numba doesn't allow Python lists in @njit
+    # 512 is way more than needed - tree is ~12 levels deep at n=1000
     stack = np.empty(512, dtype=np.int32)
 
     for i in range(n):
@@ -149,9 +119,8 @@ def _bh_force_kernel(body_pos, body_mass,
         fx = 0.0
         fy = 0.0
 
-        # Seed the traversal with the root node (index 0).
         top      = 0
-        stack[0] = 0
+        stack[0] = 0  # start at root
 
         while top >= 0:
             # Pop the top node.
@@ -163,19 +132,13 @@ def _bh_force_kernel(body_pos, body_mass,
             if node_mass[node] == 0.0:
                 continue
 
-            # ---- LEAF NODE: compute the force exactly ----
-            # Leaves are identified by node_leaf_start >= 0 (internal nodes use -1).
+            # leaf node - compute force exactly
             if node_leaf_start[node] >= 0:
                 start = node_leaf_start[node]
                 count = node_leaf_count[node]
 
-                # Go through each body in this leaf (bucket holds at most MAX_CAPACITY = 16).
-                # No Newton's 3rd law shortcut here - we're only visiting the nodes
-                # that matter for body i, not doing a symmetric pair loop.
+                # Go through each body in this leaf
                 for k in range(start, start + count):
-
-                    # Don't let a body attract itself.
-                    # leaf_body_idx[k] maps back to the original 0..n-1 body index.
                     if leaf_body_idx[k] == i:
                         continue
 
@@ -183,7 +146,6 @@ def _bh_force_kernel(body_pos, body_mass,
                     dy = leaf_pos[k, 1] - by
                     raw_dist = math.sqrt(dx*dx + dy*dy)
 
-                    # Same additive softening as the naive kernel.
                     dist = raw_dist + softening
                     if dist == 0.0:
                         continue
@@ -195,17 +157,15 @@ def _bh_force_kernel(body_pos, body_mass,
                     f = mu * leaf_mass[k] / (dist * dist)
                     fx += f * dx / safe_raw
                     fy += f * dy / safe_raw
-                continue   # leaf handled, move on
+                continue
 
-            # ---- INTERNAL NODE: decide whether to approximate or go deeper ----
-            # Vector from body i to this node's centre of mass.
+            # internal node - check opening criterion
             dx = node_cx[node] - bx
             dy = node_cy[node] - by
             dist_com = math.sqrt(dx*dx + dy*dy)
 
-            # If the body lands exactly on the node's centre of mass we can't
-            # compute the opening ratio (s/d → ∞), so just open the node.
             if dist_com == 0.0:
+                # body is exactly on the CoM, can't compute ratio so just open it
                 for c in range(4):
                     child = node_child[node, c]
                     if child >= 0:
@@ -213,24 +173,17 @@ def _bh_force_kernel(body_pos, body_mass,
                         stack[top] = child
                 continue
 
-            # Barnes-Hut opening criterion: s / d < theta
-            # s = 2 * half_width (the cell's side length)
-            # d = dist_com (distance from body i to the cell's centre of mass)
-            # When this ratio is small the cell is far enough away - or compact
-            # enough - that treating it as one point mass is a good approximation.
+            # s/d < theta means cell is far enough to approximate as a point mass
             if (2.0 * node_half_w[node]) / dist_com < theta:
-                # Good enough to approximate. Use the node's total mass at its
-                # centre of mass as a stand-in for the whole subtree.
                 dist = dist_com + softening
                 f    = mu * node_mass[node] / (dist * dist)
                 fx  += f * dx / dist_com
                 fy  += f * dy / dist_com
             else:
-                # Too close or too spread out to approximate safely.
-                # Push the four children so we dig deeper on the next iterations.
+                # too close, open the node
                 for c in range(4):
                     child = node_child[node, c]
-                    if child >= 0:        # -1 means that quadrant is empty
+                    if child >= 0:
                         top += 1
                         stack[top] = child
 
@@ -240,15 +193,11 @@ def _bh_force_kernel(body_pos, body_mass,
 
 
 # =============================================================================
-# Public wrappers - pack arrays, call the kernel, unpack forces back to bodies
+# Public wrappers
 # =============================================================================
 
 def compute_gravity_naive(bodies: list[Body]) -> None:
-    '''O(n^2/2) pairwise gravity using Newton's 3rd law.
-
-    Visits every unique pair once and applies the force to both bodies in one go.
-    Simple and exact, but the work grows as n*(n-1)/2 - gets slow quickly for large n.
-    '''
+    '''O(n^2/2) pairwise gravity. Simple and exact but gets slow fast for large n.'''
     n = len(bodies)
     if n == 0:
         return
@@ -270,11 +219,10 @@ def compute_gravity_naive(bodies: list[Body]) -> None:
 
 
 def compute_gravity_barnes_hut(bodies: list[Body], theta: float = THETA, softening: float = SOFTENING) -> None:
-    '''O(n log n) gravity via the Barnes-Hut quadtree approximation.
+    '''O(n log n) gravity via Barnes-Hut quadtree.
 
-    Rebuilds the quadtree from scratch every call (it goes stale the moment
-    bodies move), computes centre-of-mass data bottom-up, then flattens the
-    tree into plain NumPy arrays and passes everything to the compiled kernel.
+    Rebuilds the tree every call since bodies move each step.
+    Flattens it into numpy arrays for the Numba kernel.
     '''
     if not bodies:
         return
@@ -288,16 +236,11 @@ def compute_gravity_barnes_hut(bodies: list[Body], theta: float = THETA, softeni
     max_x, max_y = positions.max(axis=0)
 
     # The root cell needs to be a square that fits every body, with a bit of padding.
-    # Using the larger of the two extents keeps it square, and adding 10% stops
-    # bodies near the edge from sitting exactly on the boundary, which can cause
-    # the boundary.contains() check to fail due to floating-point rounding.
     extent     = max(max_x - min_x, max_y - min_y)
-    half_width = (extent / 2) * 1.1
+    half_width = (extent / 2) * 1.1  # 10% padding so edge bodies don't fall outside
     cx         = (min_x + max_x) / 2.0
     cy         = (min_y + max_y) / 2.0
 
-    # Edge case: if all bodies are at the same point, extent is 0 - give the root
-    # some finite size so subsequent geometry doesn't blow up.
     if half_width == 0.0:
         half_width = 1.0
 
@@ -310,8 +253,6 @@ def compute_gravity_barnes_hut(bodies: list[Body], theta: float = THETA, softeni
     # and centre of mass. The force walk needs this to apply the BH approximation.
     root.compute_mass_distribution()
 
-    # Build a lookup from Python object id → array index so the Numba kernel
-    # can identify which body is "self" and skip its own contribution.
     id_to_idx = {id(b): i for i, b in enumerate(bodies)}
 
     # Flatten the tree into plain arrays the Numba kernel can actually read.
@@ -334,11 +275,7 @@ def compute_gravity_barnes_hut(bodies: list[Body], theta: float = THETA, softeni
 
 
 def compute_gravity_vectorized(bodies: list[Body]) -> None:
-    '''O(n^2) gravity, evaluating every ordered pair independently.
-
-    Structurally different from the naive solver: visits all n^2 ordered pairs
-    (both (i,j) and (j,i)) rather than the n*(n-1)/2 unique pairs.
-    '''
+    '''O(n^2) gravity, visiting all ordered pairs independently.'''
     n = len(bodies)
     if n == 0:
         return
