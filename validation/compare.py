@@ -73,9 +73,13 @@ def calculate_orbital_period(time_series: list, position_series: list) -> float:
             exact_time = time_series[i-1] + fraction * (time_series[i] - time_series[i-1])
             crossings.append(exact_time)
             
-    if len(crossings) >= 2:
-        return (crossings[1] - crossings[0]) / 86400.0
-    return 0.0
+    # if len(crossings) >= 2:
+    #     return (crossings[1] - crossings[0]) / 86400.0
+
+    # average of all gap between consecutive crossings
+    periods = [crossings[i+1] - crossings[i] for i in range(len(crossings)-1)]
+    avg_period = np.mean(periods) / 86400
+    return avg_period
 
 
 def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: str = "Earth", years: int = 2, dt: float = 86400.0) -> None:
@@ -93,8 +97,8 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
     if target_planet not in REAL_PERIODS:
         raise ValueError(f"Unknown target planet: {target_planet}")
 
-    total_steps = int(years * 365.25)
-    start_date = "2026-03-03"
+    total_steps = int(years * 365.25 * 86400 / dt)
+    start_date = "2026-04-08"
     
     print(f"\n--- Fetching JPL Timeseries for {target_planet} ---")
     jpl_positions = fetch_jpl_timeseries(BODY_IDS[target_planet], start_date, total_steps + 1)
@@ -138,6 +142,8 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
         
         deviations = [np.linalg.norm(s - j) / 1000.0 for s, j in zip(sim_positions, jpl_positions[:-1])]
         max_dev = max(deviations)
+
+        max_drift = max(abs(e - energy_series[0]) for e in energy_series)
         
         print(f"  {name} Final Results:")
         if sim_period:
@@ -145,7 +151,7 @@ def run_integrator_comparison(bodies_factory, integrators: dict, target_planet: 
         else:
             print(f"    - Period: Orbit incomplete")
         print(f"    - Max Position Deviation from JPL: {max_dev:,.2f} km")
-        print(f"    - Energy Drift: {energy_series[-1] - energy_series[0]:.3e} J\n")
+        print(f"    - Energy Drift: {max_drift:.3e} J\n")
 
     first_name = next(iter(results))
     shared_times = results[first_name][0]

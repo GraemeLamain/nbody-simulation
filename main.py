@@ -4,7 +4,7 @@ import pygame
 from functools import partial
 import numpy as np
 from simulation.body import Body
-from simulation.physics import compute_gravity_naive, compute_gravity_barnes_hut, compute_gravity_vectorized
+from simulation.physics import compute_gravity_naive, compute_gravity_barnes_hut
 from simulation.integrators import EulerIntegration, RK4Integrator, LeapfrogIntegrator
 from simulation.simulation import Simulation
 from renderer.pygame_renderer import Renderer
@@ -19,7 +19,8 @@ parser = argparse.ArgumentParser(description="N-Body Gravitational Simulator")
 parser.add_argument("--jpl",     action="store_true", help="Use NASA JPL Horizons initial conditions")
 parser.add_argument("--compare", action="store_true", help="Run integrator comparison and exit")
 parser.add_argument("--scene",   choices=["solar", "galaxy"], default="solar", help="Scene to load: solar (default) or galaxy collision")
-parser.add_argument("--gravity", choices=["naive", "barneshut", 'vectorized'], default=None, help="Gravity algorithm: naive (default for solar) or barneshut (default for galaxy)")
+parser.add_argument("--gravity", choices=["naive", "barneshut"], default=None, help="Gravity algorithm: naive (default for solar) or barneshut (default for galaxy)")
+parser.add_argument("--record",  action="store_true", help="Record simulation to a GIF and exit")
 args = parser.parse_args()
 
 # --- Gravity function ---
@@ -33,8 +34,6 @@ if args.gravity == "barneshut":
     # velocities to NaN. Solar system is fine at 0 since bodies are well-separated.
     softening = 1e9 if args.scene == "galaxy" else 0.0
     compute_forces_fn = partial(compute_gravity_barnes_hut, softening=softening)
-elif args.gravity == "vectorized":
-    compute_forces_fn = compute_gravity_vectorized
 else:
     compute_forces_fn = compute_gravity_naive
 
@@ -95,9 +94,9 @@ if args.compare:
             "RK4":      RK4Integrator(),
             "Leapfrog": LeapfrogIntegrator(),
         },
-        target_planet="Mars",
-        years=3,
-        dt=86400.0,
+        target_planet="Earth",
+        years=10,
+        dt=86400.0 * 5,
     )
     raise SystemExit(0)
 
@@ -107,9 +106,24 @@ if args.scene == "galaxy":
     dt_sim = 3600.0             # 3600 = 1 hour
     default_steps = 1           # 1 physics frame per redraw
 else:
-    scale = (WIDTH * 0.4) / (32 * AU)
+    scale = (WIDTH * 0.4) / (36 * AU)
     dt_sim = 86400.0
     default_steps = 30
+
+# --- Recording settings ---
+if args.record:
+    if args.scene == "solar":
+        RECORD_FRAMES   = 600   # total frames to capture
+        RECORD_EVERY    = 2     # save every Nth frame to keep GIF size down
+        WARMUP_STEPS    = 0     # no warmup needed, solar system is interesting immediately
+        GIF_FPS         = 30
+        GIF_FILENAME    = "solar_system_full.gif"
+    else:
+        RECORD_FRAMES   = 600
+        RECORD_EVERY    = 3
+        WARMUP_STEPS    = 150  # skip ahead so galaxies are mid-collision
+        GIF_FPS         = 20
+        GIF_FILENAME    = "galaxy_collision.gif"
 
 # --- Simulation setup ---
 integrators = [EulerIntegration(), RK4Integrator(), LeapfrogIntegrator()]
@@ -184,6 +198,104 @@ def handle_collisions(bodies: list[Body]) -> list[Body]:
     surviving_bodies = [b for i, b in enumerate(bodies) if i not in destroyed_indices]
     return surviving_bodies + new_bodies
 
+def step_scene():
+    """Run one full frame worth of physics steps including galaxy-specific pruning."""
+    for _ in range(renderer.steps_per_frame):
+        sim.step()
+ 
+        if args.scene == "galaxy":
+            MIN_VISIBLE_DISTANCE = 3e12
+            TOTAL_MASS = 4e33
+            surviving_stars = []
+            for b in sim.bodies:
+                if b.mass >= 1e30:
+                    surviving_stars.append(b)
+                    continue
+                r = np.linalg.norm(b.position)
+                if r == 0:
+                    surviving_stars.append(b)
+                    continue
+                v_escape = np.sqrt(2 * G * TOTAL_MASS / r)
+                speed    = np.linalg.norm(b.velocity)
+                if r > MIN_VISIBLE_DISTANCE and speed > v_escape:
+                    pass
+                else:
+                    surviving_stars.append(b)
+            sim.bodies = surviving_stars
+            sim.bodies = handle_collisions(sim.bodies)
+
+def get_offset():
+    if args.scene == "galaxy":
+        return np.array([WIDTH / 2, HEIGHT / 2])
+    else:
+        return np.array([WIDTH / 2, HEIGHT / 2]) - sim.bodies[0].position * scale * renderer.zoom
+
+# --- Recording mode ---
+if args.record:
+    try:
+        from PIL import Image
+    except ImportError:
+        print("Pillow is required for recording. Install it with: pip install Pillow")
+        raise SystemExit(1)
+ 
+    # warmup - run physics without capturing so we start at an interesting point
+    if WARMUP_STEPS > 0:
+        print(f"Warming up simulation ({WARMUP_STEPS} steps)...")
+        warmup_steps_per_batch = 100
+        for i in range(0, WARMUP_STEPS, warmup_steps_per_batch):
+            for _ in range(warmup_steps_per_batch):
+                sim.step()
+                if args.scene == "galaxy":
+                    sim.bodies = [b for b in sim.bodies if b.mass >= 1e30 or
+                                  np.linalg.norm(b.position) <= 3e12]
+                    sim.bodies = handle_collisions(sim.bodies)
+            print(f"  {min(i + warmup_steps_per_batch, WARMUP_STEPS)}/{WARMUP_STEPS} steps", end="\r")
+        print(f"\nWarmup complete. Recording {RECORD_FRAMES} frames...")
+    else:
+        print(f"Recording {RECORD_FRAMES} frames...")
+ 
+    frames = []
+    frame_count = 0
+    captured = 0
+ 
+    while captured < len(range(0, RECORD_FRAMES, RECORD_EVERY)):
+        # handle quit events so window doesn't freeze
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                raise SystemExit(0)
+ 
+        step_scene()
+        offset = get_offset()
+        renderer.draw(sim.bodies, scale * renderer.zoom, offset, sim.time, integrator_names[integrator_index])
+        renderer.tick(FPS)
+ 
+        if frame_count % RECORD_EVERY == 0:
+            # grab the current frame from the pygame surface
+            raw = pygame.surfarray.array3d(renderer.screen)
+            # pygame uses (width, height, channels), PIL expects (height, width, channels)
+            img = Image.fromarray(raw.transpose(1, 0, 2))
+            # scale down to reduce GIF file size
+            # img = img.resize((img.width // 2, img.height // 2), Image.LANCZOS)
+            frames.append(img)
+            captured += 1
+            print(f"  Captured frame {captured}/{len(range(0, RECORD_FRAMES, RECORD_EVERY))}", end="\r")
+ 
+        frame_count += 1
+        if frame_count >= RECORD_FRAMES:
+            break
+ 
+    print(f"\nSaving {GIF_FILENAME}...")
+    frames[0].save(
+        GIF_FILENAME,
+        save_all=True,
+        append_images=frames[1:],
+        duration=int(1000 / GIF_FPS),
+        loop=0,
+    )
+    print(f"Done. Saved to {GIF_FILENAME}")
+    renderer.close()
+    raise SystemExit(0)
+
 # --- Main Simulation Loop ---
 running = True
 
@@ -202,53 +314,9 @@ while running:
         sim.bodies = copy.deepcopy(initial_bodies)
         sim.time = 0.0
         renderer.trails.clear()
-
-    for _ in range(renderer.steps_per_frame):
-        sim.step()
-
-        # Remove stars that have mathematically escaped the galaxy AND left the screen
-        if args.scene == "galaxy":
-            MIN_VISIBLE_DISTANCE = 3e12  # Keep it alive if it's still on screen
-            TOTAL_MASS = 4e33            # Rough mass of the two black holes combined
-            
-            surviving_stars = []
-            for b in sim.bodies:
-                # Never delete the black holes
-                if b.mass >= 1e30:
-                    surviving_stars.append(b)
-                    continue
-                
-                # Calculate distance from the center of the universe (0,0)
-                r = np.linalg.norm(b.position)
-                if r == 0:
-                    surviving_stars.append(b)
-                    continue
-                
-                # Calculate escape velocity at this exact distance
-                # v_escape = sqrt(2 * G * M / r)
-                v_escape = np.sqrt(2 * G * TOTAL_MASS / r)
-                
-                # Calculate the star's actual speed (magnitude of velocity vector)
-                speed = np.linalg.norm(b.velocity)
-                
-                # Delete ONLY if it is off-screen AND has escaped gravity
-                if r > MIN_VISIBLE_DISTANCE and speed > v_escape:
-                    pass 
-                else:
-                    surviving_stars.append(b)
-
-            sim.bodies = surviving_stars
-
-            # Handle black hole mergers and star swallowing.
-            sim.bodies = handle_collisions(sim.bodies)
-
-    if args.scene == "galaxy":
-        # Galaxy collision is symmetric so there's no single body to follow - just keep the view centred on the origin.
-        offset = np.array([WIDTH / 2, HEIGHT / 2])
-    else:
-        # Track the Sun so it stays in frame as the system's momentum slowly carries it.
-        offset = np.array([WIDTH / 2, HEIGHT / 2]) - sim.bodies[0].position * scale * renderer.zoom
-
+    
+    step_scene()
+    offset = get_offset()
     renderer.draw(sim.bodies, scale * renderer.zoom, offset, sim.time, integrator_names[integrator_index])
     renderer.tick(FPS)
 

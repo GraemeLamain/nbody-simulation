@@ -28,7 +28,7 @@ def create_galaxy_single(seed: int = 42, colors: list = STAR_COLORS_A, BH_MASS: 
     """
     rng = np.random.default_rng(seed)
 
-    num_stars = np.random.randint(1000, 2500)
+    num_stars = rng.integers(1000, 2500)
 
     # Define the range of radii for the stars
     MIN_R, MAX_R = 5e10, 4e11

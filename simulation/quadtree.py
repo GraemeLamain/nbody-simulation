@@ -36,6 +36,8 @@ class QuadTree:
     When a leaf's bucket fills up it subdivides and pushes bodies down to children.
     '''
 
+    MAX_CAPACITY = 16  # max bodies per leaf before subdividing
+
     def __init__(self, boundary: BoundingBox) -> None:
         self.boundary       = boundary          # the spatial region this node covers
         self.bodies: list[Body] = []            # body bucket - only populated for leaf nodes

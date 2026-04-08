@@ -16,7 +16,7 @@ class Renderer:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("monospace", 14)
         self.trails: dict[str, deque] = {}  # body name -> deque of world positions (metres)
-        self.trail_length = 200
+        self.trail_length = 25
         self.zoom = 1.0
         self.steps_per_frame = 30
         self.show_trails = True

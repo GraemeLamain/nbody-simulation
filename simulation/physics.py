@@ -52,40 +52,8 @@ def _naive_force_kernel(body_pos, body_mass, out_forces, G, softening):
             out_forces[j, 0] -= fx
             out_forces[j, 1] -= fy
 
-
 # =============================================================================
-# KERNEL 2 - Vectorized full N×N, no Newton's 3rd shortcut
-# =============================================================================
-
-@njit(cache=True)
-def _vectorized_force_kernel(body_pos, body_mass, out_forces, G, softening):
-    '''Full NxN kernel - every ordered pair computed independently.
-
-    Doesn't use Newton's 3rd law so it does twice the work, but uses Plummer
-    softening (epsilon^2 inside the sqrt) which is smoother than additive softening.
-    '''
-    n = len(body_mass)
-
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-
-            dx = body_pos[j, 0] - body_pos[i, 0]
-            dy = body_pos[j, 1] - body_pos[i, 1]
-
-            # Plummer softening - always positive, smooth as r -> 0
-            dist_sq = dx*dx + dy*dy + softening*softening
-            dist    = math.sqrt(dist_sq)
-
-            # F = G * m1 * m2 / (r^2 + epsilon^2)
-            f = G * body_mass[i] * body_mass[j] / dist_sq
-            out_forces[i, 0] += f * dx / dist
-            out_forces[i, 1] += f * dy / dist
-
-
-# =============================================================================
-# KERNEL 3 - Barnes-Hut O(n log n) tree walk
+# KERNEL 2 - Barnes-Hut O(n log n) tree walk
 # =============================================================================
 
 @njit(cache=True)
@@ -269,25 +237,6 @@ def compute_gravity_barnes_hut(bodies: list[Body], theta: float = THETA, softeni
                      node_child, node_leaf_start, node_leaf_count,
                      leaf_pos, leaf_mass, leaf_body_idx,
                      theta, G, softening, out_forces)
-
-    for i, b in enumerate(bodies):
-        b.force = out_forces[i]
-
-
-def compute_gravity_vectorized(bodies: list[Body]) -> None:
-    '''O(n^2) gravity, visiting all ordered pairs independently.'''
-    n = len(bodies)
-    if n == 0:
-        return
-
-    for body in bodies:
-        body.reset_force()
-
-    body_pos   = np.array([b.position for b in bodies])
-    body_mass  = np.array([b.mass     for b in bodies])
-    out_forces = np.zeros((n, 2))
-
-    _vectorized_force_kernel(body_pos, body_mass, out_forces, G, SOFTENING)
 
     for i, b in enumerate(bodies):
         b.force = out_forces[i]
